@@ -1,0 +1,29 @@
+name: 자주 쓰는 키 후보 수집
+# 수동 실행 전용. 결과는 실행 기록(ROW 줄)과 결과물(artifact, 14일 보관)로만 남고 어디에도 자동 반영하지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      mode: { description: 'page-pilot, page(결과 글 직접 열기), image-pilot, image(이미지 제목), naver(네이버 검색), video-pilot, video(카카오 영상 제목)', required: true, default: 'page-pilot' }
+      limit: { description: '최대 곡 수(비우면 전체)', required: false, default: '' }
+      offset: { description: '시작 위치', required: false, default: '0' }
+permissions:
+  contents: read
+jobs:
+  mine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - run: node scripts/key-votes.mjs "${{ inputs.mode }}" "${{ inputs.limit }}" "${{ inputs.offset }}"
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: key-mining-${{ inputs.mode }}-${{ inputs.offset }}
+          path: key-mining-out/
+          retention-days: 14
