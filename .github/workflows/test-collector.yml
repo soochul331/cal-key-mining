@@ -1,0 +1,26 @@
+name: 악보 수집기 점검
+on:
+  workflow_dispatch:
+    inputs:
+      team: { description: '팀', required: true, default: '올네이션스' }
+      limit: { description: '곡 수', required: true, default: '10' }
+      dry: { description: '--dry 이면 파일을 받지 않음', required: false, default: '' }
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - name: 점검 실행 (악보 파일은 러너 안에서만 받고 결과물로 올리지 않음)
+        env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          node score-collector/collect-scores.mjs "${{ inputs.team }}" --limit "${{ inputs.limit }}" --out /tmp/out ${{ inputs.dry }}
+          echo "--- 받은 파일(이름·크기만)"; ls -la /tmp/out | head -60
+          echo "--- 곡별 목록"; cat "/tmp/out/곡별 목록과 키 선택 근거.csv"
+          echo "--- 미수집"; cat "/tmp/out/미수집 곡과 사유.csv"
