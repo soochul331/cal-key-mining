@@ -19,7 +19,9 @@ const args = process.argv.slice(2);
 const team = args.find(a => !a.startsWith('--'));
 const opt = (name, def) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : def; };
 const limit = Number(opt('limit', 0)) || Infinity;
-const DRY = args.includes('--dry');                      // 파일을 받지 않고 키 판단만 (점검용)
+const DRY = args.includes('--dry');
+const offset = Number(opt('offset', 0)) || 0;
+const dec = s => { try { return decodeURIComponent(s); } catch { return s; } };                      // 파일을 받지 않고 키 판단만 (점검용)
 if (!team) { console.log('사용: node collect-scores.mjs <팀이름> [--limit 20]'); process.exit(1); }
 
 // ── 네이버 키 ──
@@ -125,8 +127,8 @@ function pageInfo(html, base) {
 function originalUrl(u) {
   try { const x = new URL(u);
     if (/pstatic\.net$/.test(x.host)) { x.host = x.host.replace('mblogthumb-phinf', 'blogfiles'); x.searchParams.set('type', 'w966'); return x.href.replace('blogfiles.pstatic.net', 'postfiles.pstatic.net'); }
-    if (/kakaocdn\.net$/.test(x.host) && x.searchParams.get('fname')) return decodeURIComponent(x.searchParams.get('fname'));
-    if (/daumcdn\.net$/.test(x.host) && x.searchParams.get('fname')) return decodeURIComponent(x.searchParams.get('fname'));
+    if (/kakaocdn\.net$/.test(x.host) && x.searchParams.get('fname')) return dec(x.searchParams.get('fname'));
+    if (/daumcdn\.net$/.test(x.host) && x.searchParams.get('fname')) return dec(x.searchParams.get('fname'));
     return u; } catch { return u; }
 }
 function imageSize(buf) {
@@ -158,7 +160,7 @@ async function processSong(song) {
     const { sig, files } = pageInfo(html, url);
     const ks = new Set();
     for (const s of sig) { if (!nts.some(n => norm(s).includes(n)) || MULTI.test(s) || SHIFTED.test(s)) continue; for (const k of keysIn(s)) ks.add(k); }
-    for (const f of files) { const fn = decodeURIComponent((f.url.split('/').pop() || '').split('?')[0]); if (nts.some(n => norm(fn).includes(n)) && !MULTI.test(fn) && !SHIFTED.test(fn)) for (const k of keysIn(fn)) ks.add(k); }
+    for (const f of files) { const fn = dec((f.url.split('/').pop() || '').split('?')[0]); if (nts.some(n => norm(fn).includes(n)) && !MULTI.test(fn) && !SHIFTED.test(fn)) for (const k of keysIn(fn)) ks.add(k); }
     const key = ks.size === 1 ? [...ks][0] : null;
     pages.push({ site, url: r.url, pageUrl: url, title: r.title, key, files, status: key ? '키 확인' : ks.size > 1 ? '키 여러 개' : '키 표기 없음' });
     if (key) votes[key] = (votes[key] || 0) + 1;
@@ -212,7 +214,7 @@ async function writeLists() {
 }
 
 // ── 실행 ──
-const todo = songs.filter(s => !state[s.id]).slice(0, limit);
+const todo = songs.slice(offset).filter(s => !state[s.id]).slice(0, limit);
 console.log(`${team}: 전체 ${songs.length}곡, 이미 끝남 ${Object.keys(state).length}곡, 이번 ${todo.length}곡 → ${outDir}`);
 let n = 0;
 for (const song of todo) {
