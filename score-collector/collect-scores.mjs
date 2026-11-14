@@ -25,10 +25,10 @@ const dec = s => { try { return decodeURIComponent(s); } catch { return s; } }; 
 if (!team) { console.log('사용: node collect-scores.mjs <팀이름> [--limit 20]'); process.exit(1); }
 
 // ── 네이버 키 ──
-let ID = process.env.NAVER_CLIENT_ID, SECRET = process.env.NAVER_CLIENT_SECRET;
+let ID = process.env.NAVER_CLIENT_ID, SECRET = process.env.NAVER_CLIENT_SECRET, KAKAO = process.env.KAKAO_REST_KEY;
 try {
   const txt = await readFile(join(here, 'naver-keys.txt'), 'utf8');
-  for (const line of txt.split(/\r?\n/)) { const m = line.match(/^\s*(NAVER_CLIENT_ID|NAVER_CLIENT_SECRET)\s*=\s*(\S+)/); if (m) m[1] === 'NAVER_CLIENT_ID' ? ID = m[2] : SECRET = m[2]; }
+  for (const line of txt.split(/\r?\n/)) { const m = line.match(/^\s*(NAVER_CLIENT_ID|NAVER_CLIENT_SECRET|KAKAO_REST_KEY)\s*=\s*(\S+)/); if (m) { if (m[1] === 'NAVER_CLIENT_ID') ID = m[2]; else if (m[1] === 'NAVER_CLIENT_SECRET') SECRET = m[2]; else KAKAO = m[2]; } }
 } catch {}
 if (!ID || !SECRET) { console.log('naver-keys.txt 에 NAVER_CLIENT_ID 와 NAVER_CLIENT_SECRET 을 넣어 주세요.'); process.exit(1); }
 
@@ -77,6 +77,20 @@ async function naver(kind, query) {
       if (!res.ok) { console.log(`  네이버 검색 오류 ${res.status} ${(await res.text()).slice(0, 120)}`); return []; }
       return ((await res.json()).items || []).map(it => ({ title: strip(it.title), url: it.link, description: strip(it.description), blog: it.bloggerlink }));
     } catch (e) { await sleep(1000); }
+  }
+  return [];
+}
+// 카카오(다음) 검색: naver-keys.txt 에 KAKAO_REST_KEY 가 있으면 함께 쓴다(티스토리 글이 많이 나온다).
+async function kakao(kind, query) {
+  if (!KAKAO) return [];
+  for (let a = 0; a < 3; a++) {
+    calls++;
+    try {
+      const res = await fetch(`https://dapi.kakao.com/v2/search/${kind}?size=50&query=${encodeURIComponent(query)}`, { headers: { Authorization: `KakaoAK ${KAKAO}` } });
+      if (res.status === 429) { await sleep(2000 * (a + 1)); continue; }
+      if (!res.ok) return [];
+      return ((await res.json()).documents || []).map(d => ({ title: strip(d.title), url: d.url, description: strip(d.contents) }));
+    } catch { await sleep(1000); }
   }
   return [];
 }
@@ -147,10 +161,10 @@ async function processSong(song) {
   const nts = names.map(norm).filter(n => n.length >= 2);
   const results = new Map();               // site → url (첫 번째 글)
   for (const name of names.slice(0, 2)) {
-    for (const q of [`${name} 악보`, `${name} ${team} 코드`]) for (const kind of ['blog', 'web']) for (const d of await naver(kind, q)) {
+    for (const q of [`${name} 악보`, `${name} ${team} 코드`]) for (const d of [...await naver('blog', q), ...await naver('web', q), ...await kakao('blog', q), ...await kakao('web', q)]) {
       if (!d.url || SALE.test(d.url) || /cafe\.(naver|daum)\.net|cafe\.naver\.com|youtube|instagram|facebook/.test(d.url)) continue;
       if (!nts.some(n => norm(d.title + ' ' + d.description).includes(n))) continue;
-      const site = siteOf(d.url); if (!results.has(site) && results.size < 14) results.set(site, { url: d.url, title: d.title });
+      const site = siteOf(d.url); if (!results.has(site) && results.size < 18) results.set(site, { url: d.url, title: d.title });
     }
   }
   const votes = {}; const pages = [];
@@ -174,7 +188,10 @@ async function processSong(song) {
     for (const p of pages.filter(p => p.key === key && p.files.length)) {
       if (DRY) return { song, votes, pages, key, tied, reasonPick: tied.length > 1 ? '동률: 받을 수 있는 키 중 알파벳순' : '독립 출처에서 가장 많이 확인된 키', saved: [], source: p.url };
       const saved = [];
-      for (const f of p.files.slice(0, 8)) {
+      const labelled = p.files.map(f => ({ f, ks: keysIn(dec((f.url.split('/').pop() || '').split('?')[0]) + ' ' + (f.name || '')) }));
+      const anyLabel = labelled.some(x => x.ks.length);
+      const cand = anyLabel ? labelled.filter(x => x.ks.includes(key) && x.ks.length === 1).map(x => x.f) : p.files;
+      for (const f of cand.slice(0, 8)) {
         const got = await get(originalUrl(f.url), { referer: p.pageUrl, binary: true, timeout: 30000 }) || await get(f.url, { referer: p.pageUrl, binary: true, timeout: 30000 });
         await sleep(200);
         if (!got || got.buf.length < 30000) continue;

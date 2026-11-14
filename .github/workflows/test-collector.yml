@@ -20,6 +20,7 @@ jobs:
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
         run: |
           node score-collector/collect-scores.mjs "${{ inputs.team }}" --limit "${{ inputs.limit }}" --offset "${{ inputs.offset }}" --out /tmp/out ${{ inputs.dry }}
           echo "--- 받은 파일(이름·크기만)"; ls -la /tmp/out | head -60
