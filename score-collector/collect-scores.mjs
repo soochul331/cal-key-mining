@@ -162,7 +162,7 @@ async function processSong(song) {
   const nts = names.map(norm).filter(n => n.length >= 2);
   const results = new Map();               // site → url (첫 번째 글)
   for (const name of names.slice(0, 2)) {
-    for (const q of [`${name} 악보`, `${name} ${team} 코드`]) for (const d of [...await naver('blog', q), ...await naver('web', q), ...await kakao('blog', q), ...await kakao('web', q)]) {
+    for (const q of [`${name} 악보`, `${name} 코드`, `${name} 악보 코드`]) for (const d of [...await naver('blog', q), ...await naver('web', q), ...await kakao('blog', q), ...await kakao('web', q)]) {
       if (!d.url || SALE.test(d.url) || /cafe\.(naver|daum)\.net|cafe\.naver\.com|youtube|instagram|facebook/.test(d.url)) continue;
       if (!nts.some(n => norm(d.title + ' ' + d.description).includes(n))) continue;
       const site = siteOf(d.url); if (!results.has(site) && results.size < 18) results.set(site, { url: d.url, title: d.title });
@@ -240,7 +240,8 @@ async function writeLists() {
 }
 
 // ── 실행 ──
-const todo = songs.slice(offset).filter(s => !state[s.id]).slice(0, limit);
+const RETRY = args.includes('--retry');            // 못 받은 곡만 다시 조사
+const todo = songs.slice(offset).filter(s => !state[s.id] || (RETRY && !state[s.id].saved?.length)).slice(0, limit);
 console.log(`${team}: 전체 ${songs.length}곡, 이미 끝남 ${Object.keys(state).length}곡, 이번 ${todo.length}곡 → ${outDir}`);
 let n = 0;
 for (const song of todo) {
