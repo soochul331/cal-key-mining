@@ -156,6 +156,34 @@ function imageSize(buf) {
 const extOf = (type, buf) => buf.subarray(0, 4).toString() === '%PDF' ? 'pdf' : buf[0] === 0x89 ? 'png' : buf[0] === 0x47 ? 'gif' : buf.subarray(8, 12).toString() === 'WEBP' ? 'webp' : buf[0] === 0xff ? 'jpg' : null;
 const safe = s => s.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
 
+
+// 글 하나에서 악보 파일을 고르고 받는다. key 가 null 이면 키 표기로 거르지 않는다.
+async function fetchFiles(p, key, nts) {
+  const saved = [];
+      // 받을 파일 고르기: 파일 이름·설명에 곡명이 있으면 그 파일만. 없으면 글 제목이 이 곡인 글에서만 받는다.
+      const label = f => dec((f.url.split('/').pop() || '').split('?')[0]) + ' ' + (f.name || '');
+      const named = p.files.filter(f => nts.some(n => norm(label(f)).includes(n)));
+      let cand = named.length ? named : p.about ? p.files : [];
+      const keyed = cand.map(f => ({ f, ks: keysIn(label(f)) }));
+      if (key && keyed.some(x => x.ks.length)) cand = keyed.filter(x => x.ks.length === 1 && x.ks[0] === key).map(x => x.f);
+      if (!cand.length) return saved;
+      for (const f of cand.slice(0, 8)) {
+        const got = await get(originalUrl(f.url), { referer: p.pageUrl, binary: true, timeout: 30000 }) || await get(f.url, { referer: p.pageUrl, binary: true, timeout: 30000 });
+        await sleep(200);
+        if (!got || got.buf.length < 30000) continue;
+        const ext = extOf(got.type, got.buf); if (!ext) continue;
+        let portrait = true;
+        if (ext !== 'pdf') { const sz = imageSize(got.buf); if (sz && (sz[0] < 500 || sz[1] < 500)) continue; if (sz) portrait = sz[1] >= sz[0] * 1.1; }
+        const sha = createHash('sha256').update(got.buf).digest('hex');
+        if (saved.some(s => s.sha === sha)) continue;
+        saved.push({ buf: got.buf, ext, sha, url: f.url, portrait });
+        if (saved.length >= 4) break;
+      }
+      // 악보는 대개 세로형이다. 세로형이 하나라도 있으면 가로형(표지·배너)은 뺀다.
+  if (saved.some(x => x.portrait)) for (let i = saved.length - 1; i >= 0; i--) if (!saved[i].portrait) saved.splice(i, 1);
+  return saved;
+}
+
 // ── 곡 하나 처리 ──
 async function processSong(song) {
   const names = [song.title, ...(song.aliases || []).filter(a => !/^새찬송가/.test(a))].slice(0, 3);
@@ -182,35 +210,28 @@ async function processSong(song) {
     if (key) votes[key] = (votes[key] || 0) + 1;
   }
   const ranked = Object.entries(votes).sort((a, b) => b[1] - a[1]);
-  if (!ranked.length) return { song, votes, pages, reason: results.size ? '키가 적힌 무료 악보 글을 찾지 못함' : '검색 결과 없음' };
+  if (!ranked.length) {
+    // 키 표기는 없지만 이 곡 제목의 악보 글이 있으면, 악보만 '_키 미확인' 폴더에 받아 둔다(나중에 조표 판독으로 키를 정함).
+    if (!DRY) for (const p of pages.filter(p => p.about && p.files?.length)) {
+      const files = await fetchFiles(p, null, nts);
+      if (!files.length) continue;
+      const dir = join(outDir, '_키 미확인'); await mkdir(dir, { recursive: true });
+      const saved = [];
+      for (let i = 0; i < files.length; i++) {
+        const name = files.length > 1 ? `${safe(song.title)}_${String(i + 1).padStart(2, '0')}.${files[i].ext}` : `${safe(song.title)}.${files[i].ext}`;
+        await writeFile(join(dir, name), files[i].buf); saved.push({ name: '_키 미확인/' + name, bytes: files[i].buf.length, sha: files[i].sha });
+      }
+      return { song, votes, pages, unkeyed: saved, source: p.url, reason: '키 표기 없음: 악보만 받아 둠(조표 판독 대기)' };
+    }
+    return { song, votes, pages, reason: results.size ? '키가 적힌 무료 악보 글을 찾지 못함' : '검색 결과 없음' };
+  }
   const top = ranked[0][1]; const tied = ranked.filter(([, v]) => v === top).map(([k]) => k);
   // 동점이면 실제로 악보 파일을 받을 수 있는 키 → 그래도 같으면 가나다(알파벳)순
   const order = [...tied].sort();
   for (const key of order) {
     for (const p of pages.filter(p => p.key === key && p.files.length)) {
       if (DRY) return { song, votes, pages, key, tied, reasonPick: tied.length > 1 ? '동률: 받을 수 있는 키 중 알파벳순' : '독립 출처에서 가장 많이 확인된 키', saved: [], source: p.url };
-      const saved = [];
-      // 받을 파일 고르기: 파일 이름·설명에 곡명이 있으면 그 파일만. 없으면 글 제목이 이 곡인 글에서만 받는다.
-      const label = f => dec((f.url.split('/').pop() || '').split('?')[0]) + ' ' + (f.name || '');
-      const named = p.files.filter(f => nts.some(n => norm(label(f)).includes(n)));
-      let cand = named.length ? named : p.about ? p.files : [];
-      const keyed = cand.map(f => ({ f, ks: keysIn(label(f)) }));
-      if (keyed.some(x => x.ks.length)) cand = keyed.filter(x => x.ks.length === 1 && x.ks[0] === key).map(x => x.f);
-      if (!cand.length) continue;
-      for (const f of cand.slice(0, 8)) {
-        const got = await get(originalUrl(f.url), { referer: p.pageUrl, binary: true, timeout: 30000 }) || await get(f.url, { referer: p.pageUrl, binary: true, timeout: 30000 });
-        await sleep(200);
-        if (!got || got.buf.length < 30000) continue;
-        const ext = extOf(got.type, got.buf); if (!ext) continue;
-        let portrait = true;
-        if (ext !== 'pdf') { const sz = imageSize(got.buf); if (sz && (sz[0] < 500 || sz[1] < 500)) continue; if (sz) portrait = sz[1] >= sz[0] * 1.1; }
-        const sha = createHash('sha256').update(got.buf).digest('hex');
-        if (saved.some(s => s.sha === sha)) continue;
-        saved.push({ buf: got.buf, ext, sha, url: f.url, portrait });
-        if (saved.length >= 4) break;
-      }
-      // 악보는 대개 세로형이다. 세로형이 하나라도 있으면 가로형(표지·배너)은 뺀다.
-      if (saved.some(x => x.portrait)) for (let i = saved.length - 1; i >= 0; i--) if (!saved[i].portrait) saved.splice(i, 1);
+      const saved = await fetchFiles(p, key, nts);
       if (!saved.length) continue;
       const base = `${safe(song.title)}_${key}`;
       const files = [];
@@ -234,6 +255,7 @@ async function writeLists() {
     ...ok.map(r => [r.title, r.key, r.saved?.length || 0, (r.saved || []).map(f => f.name).join(' | '), JSON.stringify(r.votes), r.reasonPick, '', r.source])]));
   await writeFile(join(outDir, '미수집 곡과 사유.csv'), csv([['곡명', '사유', '확인된키_게시물기재기준', '유료또는구독참고링크'], ...done.filter(r => !ok.includes(r)).map(r => [r.title, r.reason, JSON.stringify(r.votes || {}), ''])]));
   await writeFile(join(outDir, '파일 검증 목록.csv'), csv([['곡명', '선택키', '파일명', '바이트', 'SHA256', '출처'], ...ok.flatMap(r => (r.saved || []).map(f => [r.title, r.key, f.name, f.bytes, f.sha, r.source]))]));
+  await writeFile(join(outDir, '키 미확인 악보 목록.csv'), csv([['곡명', '파일명', '바이트', 'SHA256', '출처'], ...done.flatMap(r => (r.unkeyed || []).map(f => [r.title, f.name, f.bytes, f.sha, r.source]))]));
   await writeFile(join(outDir, '조사한 출처 목록.csv'), csv([['URL', '페이지제목', '확인상태', '확인키_게시물기재기준', '연결후보곡'], ...done.flatMap(r => (r.pages || []).map(p => [p.url, p.title, p.status, p.key || '', r.title]))]));
   const files = ok.reduce((a, r) => a + (r.saved?.length || 0), 0), bytes = ok.reduce((a, r) => a + (r.saved || []).reduce((b, f) => b + f.bytes, 0), 0);
   await writeFile(join(outDir, '자료 안내.txt'), `﻿${team} 대표 악보 모음\r\n정리일: ${new Date().toISOString().slice(0, 10)}\r\n\r\n수집 결과: ${ok.length}곡 / 악보 파일 ${files}개 / ${bytes.toLocaleString()}바이트 (대상 ${songs.length}곡 중 ${done.length}곡 조사)\r\n\r\n조사 범위\r\n- CAL콘티메이커 곡 목록의 ${team} 곡(한글·영문 제목과 별칭)\r\n- 네이버 블로그·웹문서 검색에서 찾은 공개 악보 글. 인터넷 전체를 망라했다는 뜻은 아닙니다.\r\n- 악보 판매·유통 사이트, 로그인이 필요한 카페 글은 제외했습니다.\r\n\r\n키 선택\r\n- 실제로 열어 본 글에서 곡명과 함께 적힌 키 표기를 집계했습니다. 한 사이트(블로그)의 같은 곡은 한 번만 셌습니다.\r\n- 키 변환본(키업·여자키 등)과 여러 키가 함께 적힌 글은 세지 않았습니다.\r\n- 가장 많이 확인된 키를 고르고, 동률이면 원본 파일을 받을 수 있는 키 중 알파벳순으로 골랐습니다.\r\n- 파일 이름의 키는 게시물 표기 기준입니다. 실물 조표와 다른 경우 검토 메모에 남깁니다.\r\n\r\n이용 안내\r\n- 이 폴더의 악보는 개인 확인용입니다. 저작권은 각 곡의 저작권자에게 있으며, 다시 게시하거나 배포하지 않습니다.\r\n`);
@@ -248,8 +270,8 @@ for (const song of todo) {
   n++;
   let r;
   try { r = await processSong(song); } catch (e) { r = { song, reason: '처리 오류: ' + e.message }; }
-  state[song.id] = { title: song.title, key: r.key, votes: r.votes || {}, reasonPick: r.reasonPick, reason: r.reason, saved: r.saved, source: r.source, pages: (r.pages || []).map(p => ({ url: p.url, title: p.title, status: p.status, key: p.key })) };
-  console.log(`[${n}/${todo.length}] ${song.title} → ${r.saved?.length ? `${r.key} · 파일 ${r.saved.length}개` : r.key && DRY ? `${r.key} (점검)` : r.reason}`);
+  state[song.id] = { title: song.title, key: r.key, votes: r.votes || {}, reasonPick: r.reasonPick, reason: r.reason, saved: r.saved, unkeyed: r.unkeyed, source: r.source, pages: (r.pages || []).map(p => ({ url: p.url, title: p.title, status: p.status, key: p.key })) };
+  console.log(`[${n}/${todo.length}] ${song.title} → ${r.saved?.length ? `${r.key} · 파일 ${r.saved.length}개` : r.unkeyed?.length ? `키 미확인 · 악보 ${r.unkeyed.length}개 받아 둠` : r.key && DRY ? `${r.key} (점검)` : r.reason}`);
   await writeFile(stateFile, JSON.stringify(state));
   if (n % 10 === 0) await writeLists();
 }
