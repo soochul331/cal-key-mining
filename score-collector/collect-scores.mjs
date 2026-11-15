@@ -136,7 +136,8 @@ function pageInfo(html, base) {
     add(src, alt);
   }
   for (const m of html.matchAll(/href=["']([^"']+\.pdf(\?[^"']*)?)["']/gi)) add(m[1], 'pdf');
-  return { sig, files };
+  const heads = [...html.matchAll(/<title[^>]*>([\s\S]*?)<\/title>|<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/gi)].map(m => decodeHtml(strip(m[1] || m[2] || '')));
+  return { sig, files, heads };
 }
 function originalUrl(u) {
   try { const x = new URL(u);
@@ -171,12 +172,13 @@ async function processSong(song) {
   for (const [site, r] of results) {
     const url = mobileUrl(r.url); const html = await get(url); await sleep(250);
     if (!html) { pages.push({ site, url: r.url, title: r.title, status: '열기 실패' }); continue; }
-    const { sig, files } = pageInfo(html, url);
+    const { sig, files, heads } = pageInfo(html, url);
+    const about = heads.some(h => nts.some(n => norm(h).includes(n)));   // 글 제목이 이 곡인가(여러 곡 모음 글 거르기)
     const ks = new Set();
     for (const s of sig) { if (!nts.some(n => norm(s).includes(n)) || MULTI.test(s) || SHIFTED.test(s)) continue; for (const k of keysIn(s)) ks.add(k); }
     for (const f of files) { const fn = dec((f.url.split('/').pop() || '').split('?')[0]); if (nts.some(n => norm(fn).includes(n)) && !MULTI.test(fn) && !SHIFTED.test(fn)) for (const k of keysIn(fn)) ks.add(k); }
     const key = ks.size === 1 ? [...ks][0] : null;
-    pages.push({ site, url: r.url, pageUrl: url, title: r.title, key, files, status: key ? '키 확인' : ks.size > 1 ? '키 여러 개' : '키 표기 없음' });
+    pages.push({ site, url: r.url, pageUrl: url, title: r.title, key, files, about, status: key ? '키 확인' : ks.size > 1 ? '키 여러 개' : '키 표기 없음' });
     if (key) votes[key] = (votes[key] || 0) + 1;
   }
   const ranked = Object.entries(votes).sort((a, b) => b[1] - a[1]);
@@ -188,20 +190,27 @@ async function processSong(song) {
     for (const p of pages.filter(p => p.key === key && p.files.length)) {
       if (DRY) return { song, votes, pages, key, tied, reasonPick: tied.length > 1 ? '동률: 받을 수 있는 키 중 알파벳순' : '독립 출처에서 가장 많이 확인된 키', saved: [], source: p.url };
       const saved = [];
-      const labelled = p.files.map(f => ({ f, ks: keysIn(dec((f.url.split('/').pop() || '').split('?')[0]) + ' ' + (f.name || '')) }));
-      const anyLabel = labelled.some(x => x.ks.length);
-      const cand = anyLabel ? labelled.filter(x => x.ks.includes(key) && x.ks.length === 1).map(x => x.f) : p.files;
+      // 받을 파일 고르기: 파일 이름·설명에 곡명이 있으면 그 파일만. 없으면 글 제목이 이 곡인 글에서만 받는다.
+      const label = f => dec((f.url.split('/').pop() || '').split('?')[0]) + ' ' + (f.name || '');
+      const named = p.files.filter(f => nts.some(n => norm(label(f)).includes(n)));
+      let cand = named.length ? named : p.about ? p.files : [];
+      const keyed = cand.map(f => ({ f, ks: keysIn(label(f)) }));
+      if (keyed.some(x => x.ks.length)) cand = keyed.filter(x => x.ks.length === 1 && x.ks[0] === key).map(x => x.f);
+      if (!cand.length) continue;
       for (const f of cand.slice(0, 8)) {
         const got = await get(originalUrl(f.url), { referer: p.pageUrl, binary: true, timeout: 30000 }) || await get(f.url, { referer: p.pageUrl, binary: true, timeout: 30000 });
         await sleep(200);
         if (!got || got.buf.length < 30000) continue;
         const ext = extOf(got.type, got.buf); if (!ext) continue;
-        if (ext !== 'pdf') { const sz = imageSize(got.buf); if (sz && (sz[0] < 500 || sz[1] < 500)) continue; }
+        let portrait = true;
+        if (ext !== 'pdf') { const sz = imageSize(got.buf); if (sz && (sz[0] < 500 || sz[1] < 500)) continue; if (sz) portrait = sz[1] >= sz[0] * 1.1; }
         const sha = createHash('sha256').update(got.buf).digest('hex');
         if (saved.some(s => s.sha === sha)) continue;
-        saved.push({ buf: got.buf, ext, sha, url: f.url });
+        saved.push({ buf: got.buf, ext, sha, url: f.url, portrait });
         if (saved.length >= 4) break;
       }
+      // 악보는 대개 세로형이다. 세로형이 하나라도 있으면 가로형(표지·배너)은 뺀다.
+      if (saved.some(x => x.portrait)) for (let i = saved.length - 1; i >= 0; i--) if (!saved[i].portrait) saved.splice(i, 1);
       if (!saved.length) continue;
       const base = `${safe(song.title)}_${key}`;
       const files = [];
