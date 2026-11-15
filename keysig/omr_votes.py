@@ -73,7 +73,7 @@ def image_search(q):
         d = get_json(f'https://naverapihub.apigw.ntruss.com/search/v1/image?display=40&query={urllib.parse.quote(q)}',
                      {'X-NCP-APIGW-API-KEY-ID': NID, 'X-NCP-APIGW-API-KEY': NSEC})
         out += [{'title': strip(i.get('title')), 'img': i.get('link'), 'page': i.get('link')} for i in d.get('items', [])]
-    if KAKAO:
+    if False and KAKAO:   # 카카오 이미지 결과는 제목이 없어 다른 곡 이미지가 섞인다(시험 정확도 27%) → 쓰지 않음
         d = get_json(f'https://dapi.kakao.com/v2/search/image?size=40&query={urllib.parse.quote(q)}', {'Authorization': f'KakaoAK {KAKAO}'})
         out += [{'title': strip(i.get('display_sitename', '') + ' ' + (i.get('doc_url') or '')), 'img': i.get('image_url'), 'page': i.get('doc_url')} for i in d.get('documents', [])]
     return out
@@ -110,7 +110,7 @@ def song_votes(title, nt):
                 continue
             text = it['title']
             # 네이버 이미지 결과는 제목에 곡명이 있어야 한다. 카카오는 제목이 없어 출처 주소로만 거른다.
-            if NID and it['page'] == it['img'] and nt not in norm(text):
+            if nt not in norm(text):
                 continue
             if SHIFTED.search(text) or MULTI.search(text):
                 continue
