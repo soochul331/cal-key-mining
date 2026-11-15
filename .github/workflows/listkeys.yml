@@ -1,0 +1,24 @@
+name: 코드별 찬양 목록 글에서 키 수집
+on:
+  workflow_dispatch:
+    inputs:
+      pages: { description: '검색어마다 볼 쪽수', required: false, default: '3' }
+permissions:
+  contents: read
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        keys: ['C,Am', 'D,Bm', 'E', 'F,Dm', 'G,Em', 'A', 'B,Bb', 'Eb,Ab', 'Db,F#']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+        run: node scripts/listkeys.mjs "${{ matrix.keys }}" "${{ inputs.pages }}"
