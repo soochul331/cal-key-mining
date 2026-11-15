@@ -149,7 +149,7 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     works = json.load(open(os.path.join(root, 'targets.json'), encoding='utf-8'))['works']
     if mode == 'pilot':
-        targets = [w for w in works if any(a.get('keyEvidence') and a.get('key') for a in w['arrangements'])]
+        targets = [w for w in works if w.get('genre') != '찬송가' and any(a.get('keyEvidence') and a.get('key') for a in w['arrangements'])]
     elif mode == 'team':
         songs = json.load(open(os.path.join(root, 'score-collector', 'songs.json'), encoding='utf-8'))['teams'][team]
         ids = {s['id'] for s in songs}
