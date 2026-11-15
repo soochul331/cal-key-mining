@@ -1,0 +1,30 @@
+name: 조표 판독 키 수집
+# 이미지 검색으로 찾은 악보 이미지를 내려받아 조표와 첫 코드를 읽고, 키와 출처 주소만 기록한다.
+# 이미지 파일은 판독 직후 지우며 결과물로 올리지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      mode: { description: 'pilot, team, keyless', required: true, default: 'pilot' }
+      limit: { description: '최대 곡 수', required: false, default: '' }
+      offset: { description: '시작 위치', required: false, default: '0' }
+      team: { description: 'team 모드의 팀 이름', required: false, default: '' }
+permissions:
+  contents: read
+jobs:
+  omr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr >/dev/null && pip install -q opencv-python-headless numpy pytesseract
+      - env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+        run: python keysig/omr_votes.py "${{ inputs.mode }}" "${{ inputs.limit }}" "${{ inputs.offset }}" "${{ inputs.team }}"
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: omr-${{ inputs.mode }}-${{ inputs.offset }}
+          path: key-mining-out/
+          retention-days: 14
