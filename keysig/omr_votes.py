@@ -21,6 +21,32 @@ from collections import Counter
 
 sys.path.insert(0, os.path.dirname(__file__))
 import keysig  # noqa: E402
+import difflib  # noqa: E402
+_reader = None
+
+
+def title_ok(path, nt):
+    """악보 윗부분 글자를 읽어 곡 제목이 있는지 본다(글자 인식 오차를 감안해 70% 이상 일치)."""
+    global _reader
+    import cv2
+    if _reader is None:
+        import easyocr
+        _reader = easyocr.Reader(['ko', 'en'], gpu=False, verbose=False)
+    img = keysig.load(path)
+    if img is None:
+        return False
+    h, w = img.shape[:2]
+    top = img[:max(80, int(h * 0.2))]
+    if w > 1400:
+        top = cv2.resize(top, None, fx=1400 / w, fy=1400 / w)
+    txt = norm(' '.join(x[1] for x in _reader.readtext(top)))
+    if not txt:
+        return False
+    if nt in txt:
+        return True
+    m = difflib.SequenceMatcher(None, nt, txt).get_matching_blocks()
+    return sum(b.size for b in m) >= max(3, 0.7 * len(nt))
+
 
 mode = sys.argv[1] if len(sys.argv) > 1 else 'pilot'
 limit = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else 10 ** 9
@@ -73,7 +99,7 @@ def image_search(q):
         d = get_json(f'https://naverapihub.apigw.ntruss.com/search/v1/image?display=40&query={urllib.parse.quote(q)}',
                      {'X-NCP-APIGW-API-KEY-ID': NID, 'X-NCP-APIGW-API-KEY': NSEC})
         out += [{'title': strip(i.get('title')), 'img': i.get('link'), 'page': i.get('link')} for i in d.get('items', [])]
-    if False and KAKAO:   # 카카오 이미지 결과는 제목이 없어 다른 곡 이미지가 섞인다(시험 정확도 27%) → 쓰지 않음
+    if KAKAO:   # 제목이 없는 결과는 악보 위 제목 글자 인식으로 곡을 확인한다
         d = get_json(f'https://dapi.kakao.com/v2/search/image?size=40&query={urllib.parse.quote(q)}', {'Authorization': f'KakaoAK {KAKAO}'})
         out += [{'title': strip(i.get('display_sitename', '') + ' ' + (i.get('doc_url') or '')), 'img': i.get('image_url'), 'page': i.get('doc_url')} for i in d.get('documents', [])]
     return out
@@ -110,7 +136,7 @@ def song_votes(title, nt):
                 continue
             text = it['title']
             # 네이버 이미지 결과는 제목에 곡명이 있어야 한다. 카카오는 제목이 없어 출처 주소로만 거른다.
-            if nt not in norm(text):
+            if it['page'] == it['img'] and nt not in norm(text):   # 네이버 결과: 제목에 곡명
                 continue
             if SHIFTED.search(text) or MULTI.search(text):
                 continue
@@ -128,8 +154,10 @@ def song_votes(title, nt):
             f.write(data)
             path = f.name
         try:
-            key, why = keysig.read_key(path)
-            chord = keysig.first_chord(path) if key else None
+            key, chord = None, None
+            if title_ok(path, nt):
+                key, why = keysig.read_key(path)
+                chord = keysig.first_chord(path) if key else None
         except Exception:
             key, chord = None, None
         finally:

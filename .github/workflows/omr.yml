@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v5
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr >/dev/null && pip install -q opencv-python-headless numpy pytesseract
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr >/dev/null && pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu && pip install -q opencv-python-headless numpy pytesseract easyocr
       - env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
